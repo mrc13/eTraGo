@@ -189,17 +189,80 @@ def update_data_frames(network,cluster_weights, dates,hours):
     network.snapshot_weightings.sort_index()
     
     return network
-    
-def daily_bounds(network, snapshots):
-    """ This will bound the storage level to 0.5 max_level every 24th hour.
+
+def snapshot_cluster_constraints(network, snapshots):
+    """
+
+    Notes
+    ------
+    Adding arrays etc. to `network.model` as attribute is not required but has
+    been done as it belongs to the model as sets for constraints and variables
+
     """
     if network.cluster:
-
         sus = network.storage_units
-        # take every first hour of the clustered days
-        network.model.period_starts = network.snapshot_weightings.index[0::24]
 
         network.model.storages = sus.index
+
+        if True:
+        # TODO: replace condition by somthing like:
+        # if network.cluster['intertemporal']:
+            # somewhere get 1...365, e.g in network.cluster['candidates']
+            # should be array-like
+            candidates = network.cluster['candidates']
+
+            # mapper for finding representative period (from clusterd data) for
+            # every candidate
+            candidate_period_mapper = network.cluster['candidate_period_mapper']
+
+            # create set for inter-temp contraints and variables
+            network.model.candidates = po.Set(initialize=candidates,
+                                              ordered=True)
+
+            # create inter soc variable for each storage and each candidate
+            # (e.g. day of year for daily clustering)
+            network.model.state_of_charge_inter = po.Var(
+                network.model.storages, network.model.candidates
+                within=po.NonNegativeReals)
+
+            def inter_storage_soc_rule(m, s, i):
+                """
+                """
+                if i == network.model.canadidates[-1]:
+                    # if last candidate: build 'cyclic' constraint instead normal
+                    # normal one (would cause error anyway as t+1 does not exist for
+                    # last timestep)
+                    (m.state_of_charge_inter[s, i] ==
+                     m.state_of_charge_inter[s, network.model.canadidates[0]])
+                else:
+                    expr = (
+                        m.state_of_charge_inter[s, i + 1] ==
+                        m.state_of_charge_inter[s, i] *
+                        (1 - network.storage_units[s].standing_loss)^24 +
+                        # TODO:
+                        # candidate_period_mapper needs to map to last timestep of
+                        # representative period for canadidate i. which shoul match
+                        # the snapshot index of course
+                        m.state_of_charge[s, candidate_period_mapper[i]])
+                return expr
+            network.model.inter_storage_soc_constraint = po.Constraint(
+                network.model.storages, network.model.candidates,
+                rule=inter_storage_soc_rule)
+
+            def inter_storage_capacity_rule(m, s, i):
+                """
+                """
+                return (
+                    m.state_of_charge_inter[s, i] *
+                    (1 - network.storage_units[s].standing_loss)^24 +
+                    m.state_of_charge[s, candidate_period_mapper[i]] <=
+                    m.storage_p_nom[s] * network.storage_units.at[s, 'max_hours'])
+            network.model.inter_storage_capacity_constraint = po.Constraint(
+                network.model.storages, network.model.candidates,
+                rule=inter_storage__capacity_rule)
+
+        # take every first hour of the clustered days
+        network.model.period_starts = network.snapshot_weightings.index[0::24]
 
         def day_rule(m, s, p):
             """
