@@ -29,7 +29,7 @@ import time
 import datetime
 import os
 
-
+# Hallo Mirco hier
 if not 'READTHEDOCS' in os.environ:
     # Sphinx does not run this code.
     # Do not import internal packages directly  
